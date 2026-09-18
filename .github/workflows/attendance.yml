@@ -1,0 +1,56 @@
+name: Hajiri Attendance Auto-Checkin
+
+on:
+  schedule:
+    # 08:55 UTC is 2:25 PM IST (UTC+5:30), Monday through Friday
+    - cron: '55 8 * * 1-5'
+  workflow_dispatch: # Allows manual trigger if ever needed
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Run Attendance Script
+        env:
+          HAJIRI_EMAIL: ${{ secrets.HAJIRI_EMAIL }}
+          HAJIRI_PASSWORD: ${{ secrets.HAJIRI_PASSWORD }}
+          HAJIRI_USER_UUID: "07f83471-7031-11ef-be8b-0214d21f7cf7"
+        run: |
+          python -c '
+          import os, time, random, requests
+
+          # Random jitter: 0 to 5 minutes before 2:30 PM IST
+          delay = random.randint(0, 300)
+          print(f"Waiting {delay} seconds...")
+          time.sleep(delay)
+
+          email = os.environ["HAJIRI_EMAIL"]
+          password = os.environ["HAJIRI_PASSWORD"]
+          user_uuid = os.environ["HAJIRI_USER_UUID"]
+
+          # Step 1: Login
+          login_url = "https://production.hajiri.work/api/v2/user/auth/login/email"
+          resp = requests.get(login_url, params={"email": email, "password": password}, headers={"Accept": "application/json"})
+          data = resp.json()
+          token = data.get("tokenResponse", {}).get("access_token")
+
+          if not token:
+              raise SystemExit(f"Login failed: {data}")
+
+          # Step 2: Post /back command
+          post_url = "https://production.hajiri.work/api/v2/attendance/checkin-checkout-from-dashboard"
+          att_resp = requests.post(
+              post_url,
+              params={"user_uuid": user_uuid, "command": "/back"},
+              headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
+          )
+          print(f"Status: {att_resp.status_code}, Response: {att_resp.text}")
+          '
