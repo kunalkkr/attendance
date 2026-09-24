@@ -1,4 +1,4 @@
-name: Hajiri Break & Back Automation
+name: Hajiri Break, Back & Out Automation
 
 on:
   workflow_dispatch:
@@ -11,6 +11,7 @@ on:
         options:
           - '/break'
           - '/back'
+          - '/out'
 
 jobs:
   attendance:
@@ -35,6 +36,7 @@ jobs:
           import os
           import sys
           import requests
+          from urllib.parse import urlparse, parse_qs
 
           email = os.environ["HAJIRI_EMAIL"]
           password = os.environ["HAJIRI_PASSWORD"]
@@ -42,7 +44,7 @@ jobs:
           command = os.environ.get("COMMAND", "").strip()
 
           if not command:
-              print("Error: No command passed in inputs!")
+              print("Error: No command provided!")
               sys.exit(1)
 
           print(f"=== Starting Routine: {command} ===")
@@ -70,26 +72,82 @@ jobs:
           user_uuid = login_data.get("userUuid") or user_uuid
           print(f"Authenticated successfully. Using userUuid: {user_uuid}")
 
-          # Step 2: Send Attendance Command
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/json"
+          }
+
+          # Step 2: Trigger Dashboard Action
           attendance_url = "https://production.hajiri.work/api/v2/attendance/checkin-checkout-from-dashboard"
           att_resp = requests.post(
               attendance_url,
               params={"user_uuid": user_uuid, "command": command},
-              headers={
-                  "Authorization": f"Bearer {token}",
-                  "Accept": "application/json"
-              },
+              headers=headers,
               timeout=20
           )
+          print(f"Initial Command HTTP Status: {att_resp.status_code}")
+          att_data = att_resp.json()
+          print("Response Data:", att_data)
 
-          # Step 3: Verify and Log
-          print(f"HTTP Status: {att_resp.status_code}")
-          try:
-              result = att_resp.json()
-              print(f"Response Status: {result.get('status')}")
-              print(f"Response Message: {result.get('message')}")
-          except Exception:
-              print(f"Raw Response: {att_resp.text}")
+          # Step 3: Handle /out Location Validation Pipeline
+          if command == "/out":
+              msg_url = att_data.get("message", "")
+              unique_id = None
+
+              # Extract uniqueId from redirect URL query parameters
+              if msg_url and "uniqueId=" in msg_url:
+                  parsed = urlparse(msg_url)
+                  qs = parse_qs(parsed.query)
+                  unique_id = qs.get("uniqueId", [None])[0]
+
+              if not unique_id:
+                  print("Error: Could not extract uniqueId from message URL:", msg_url)
+                  sys.exit(1)
+
+              print(f"Extracted uniqueId: {unique_id}")
+
+              # Optional verification ping if required by Hajiri
+              validator_url = "https://production.hajiri.work/api/v2/user/auth/location-validator-url"
+              try:
+                  val_resp = requests.get(
+                      validator_url,
+                      params={"uniqueId": unique_id},
+                      headers=headers,
+                      timeout=20
+                  )
+                  print(f"Validator URL Ping HTTP Status: {val_resp.status_code}")
+              except Exception as e:
+                  print(f"Warning: Validator ping failed or skipped: {e}")
+
+              # Submit location verification payload
+              location_submit_url = "https://production.hajiri.work/api/v2/attendance/check-in-location"
+              payload = {
+                  "id": 0,
+                  "latitude": "28.391356375316565",
+                  "longitude": "77.05989980541284",
+                  "distance": "",
+                  "status": "",
+                  "addressLine1": "",
+                  "currentLocation": "93R6+G3C, Sector 67, Gurugram, Haryana 122101, India",
+                  "imageUrl": "",
+                  "locationName": "",
+                  "uniqueId": unique_id
+              }
+
+              loc_resp = requests.post(
+                  location_submit_url,
+                  params={"userUuid": user_uuid},
+                  json=payload,
+                  headers=headers,
+                  timeout=20
+              )
+              print(f"Check-In-Location HTTP Status: {loc_resp.status_code}")
+              try:
+                  print("Location Response:", loc_resp.json())
+              except Exception:
+                  print("Raw Location Response:", loc_resp.text)
+
+              loc_resp.raise_for_status()
 
           att_resp.raise_for_status()
           print(f"=== Successfully executed {command} ===")
