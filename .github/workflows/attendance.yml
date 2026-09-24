@@ -1,1 +1,96 @@
+name: Hajiri Break & Back Automation
 
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Command to trigger manually or via API'
+        required: true
+        default: '/break'
+        type: choice
+        options:
+          - '/break'
+          - '/back'
+
+jobs:
+  attendance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Execute Attendance Command
+        env:
+          HAJIRI_EMAIL: ${{ secrets.HAJIRI_EMAIL }}
+          HAJIRI_PASSWORD: ${{ secrets.HAJIRI_PASSWORD }}
+          HAJIRI_USER_UUID: "07f83471-7031-11ef-be8b-0214d21f7cf7"
+          COMMAND: ${{ github.event.inputs.command }}
+        run: |
+          python - << 'EOF'
+          import os
+          import sys
+          import requests
+
+          email = os.environ["HAJIRI_EMAIL"]
+          password = os.environ["HAJIRI_PASSWORD"]
+          user_uuid = os.environ.get("HAJIRI_USER_UUID", "07f83471-7031-11ef-be8b-0214d21f7cf7")
+          command = os.environ.get("COMMAND", "").strip()
+
+          if not command:
+              print("Error: No command passed in inputs!")
+              sys.exit(1)
+
+          print(f"=== Starting Routine: {command} ===")
+
+          # Step 1: Authenticate
+          login_url = "https://production.hajiri.work/api/v2/user/auth/login/email"
+          login_resp = requests.get(
+              login_url,
+              params={"email": email, "password": password},
+              headers={"Accept": "application/json"},
+              timeout=20
+          )
+          login_resp.raise_for_status()
+          login_data = login_resp.json()
+
+          if not login_data.get("status"):
+              print("Authentication failed:", login_data)
+              sys.exit(1)
+
+          token = login_data.get("tokenResponse", {}).get("access_token")
+          if not token:
+              print("Token missing from response:", login_data)
+              sys.exit(1)
+
+          user_uuid = login_data.get("userUuid") or user_uuid
+          print(f"Authenticated successfully. Using userUuid: {user_uuid}")
+
+          # Step 2: Send Attendance Command
+          attendance_url = "https://production.hajiri.work/api/v2/attendance/checkin-checkout-from-dashboard"
+          att_resp = requests.post(
+              attendance_url,
+              params={"user_uuid": user_uuid, "command": command},
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/json"
+              },
+              timeout=20
+          )
+
+          # Step 3: Verify and Log
+          print(f"HTTP Status: {att_resp.status_code}")
+          try:
+              result = att_resp.json()
+              print(f"Response Status: {result.get('status')}")
+              print(f"Response Message: {result.get('message')}")
+          except Exception:
+              print(f"Raw Response: {att_resp.text}")
+
+          att_resp.raise_for_status()
+          print(f"=== Successfully executed {command} ===")
+          EOF
