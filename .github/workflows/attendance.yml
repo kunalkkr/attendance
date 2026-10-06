@@ -24,6 +24,12 @@ jobs:
       - name: Install Dependencies
         run: pip install requests
 
+      - name: Random Delay (Up to 10 Minutes)
+        run: |
+          DELAY=$(( (RANDOM % 600) + 1 ))
+          echo "Waiting for ${DELAY} seconds (~$(( DELAY / 60 )) min $(( DELAY % 60 )) sec) before running attendance..."
+          sleep ${DELAY}
+
       - name: Execute Attendance Command
         env:
           HAJIRI_EMAIL: ${{ secrets.HAJIRI_EMAIL }}
