@@ -1,5 +1,5 @@
 name: Hajiri Break, Back & Out Automation
-on:kkkk
+on:
   workflow_dispatch:
     inputs:
       command:
